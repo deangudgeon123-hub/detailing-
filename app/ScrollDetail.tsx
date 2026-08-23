@@ -3,60 +3,53 @@
 import { useEffect, useRef, useState } from 'react';
 
 const FRAME_COUNT = 120;
-
 const frameSrc = (index: number) => `/frames/frame_${String(index + 1).padStart(4, '0')}.webp`;
 
 export default function ScrollDetail() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sectionRef = useRef<HTMLElement | null>(null);
+  const railRef = useRef<HTMLSpanElement | null>(null);
   const imagesRef = useRef<HTMLImageElement[]>([]);
   const currentFrameRef = useRef(0);
   const currentFloatFrameRef = useRef(0);
   const targetFrameRef = useRef(0);
   const animationRef = useRef<number | null>(null);
+  const stageRef = useRef(0);
   const [loaded, setLoaded] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [stage, setStage] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
     const images: HTMLImageElement[] = [];
-    let loadedCount = 0;
-
-    for (let i = 0; i < FRAME_COUNT; i += 1) {
-      const image = new Image();
-      image.src = frameSrc(i);
-      image.decoding = 'async';
-      image.onload = () => {
-        loadedCount += 1;
-        if (i === 0) drawFrame(0);
-        if (loadedCount >= FRAME_COUNT) setLoaded(true);
-      };
-      images.push(image);
-    }
-
-    imagesRef.current = images;
 
     function drawFrame(index: number) {
       const canvas = canvasRef.current;
       const image = imagesRef.current[index];
-      if (!canvas || !image || !image.complete || !image.naturalWidth) return;
+      if (!canvas || !image || !image.naturalWidth) return;
 
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { alpha: false });
       if (!ctx) return;
 
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const width = window.innerWidth;
       const height = window.innerHeight;
       const isMobile = width <= 800;
+      // A huge 2x canvas is expensive on phones and was causing frame drops.
+      const dpr = isMobile ? 1 : Math.min(window.devicePixelRatio || 1, 1.5);
+      const pixelWidth = Math.floor(width * dpr);
+      const pixelHeight = Math.floor(height * dpr);
 
-      if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
-        canvas.width = Math.floor(width * dpr);
-        canvas.height = Math.floor(height * dpr);
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
         canvas.style.width = `${width}px`;
         canvas.style.height = `${height}px`;
       }
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, width, height);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.fillStyle = '#050505';
+      ctx.fillRect(0, 0, width, height);
 
       const imageRatio = image.naturalWidth / image.naturalHeight;
       const canvasRatio = width / height;
@@ -78,7 +71,9 @@ export default function ScrollDetail() {
           const transitionStart = 78;
           const transitionEnd = 108;
           const transitionProgress = Math.max(0, Math.min(1, (index - transitionStart) / (transitionEnd - transitionStart)));
-          const mobileFocus = startFocus + (endFocus - startFocus) * transitionProgress;
+          // Smoothstep stops the crop movement from feeling like a second animation fighting the frames.
+          const eased = transitionProgress * transitionProgress * (3 - 2 * transitionProgress);
+          const mobileFocus = startFocus + (endFocus - startFocus) * eased;
           offsetX = -(overflowX * mobileFocus);
         } else {
           offsetX = -overflowX / 2;
@@ -86,6 +81,39 @@ export default function ScrollDetail() {
       }
 
       ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
+    }
+
+    async function preload() {
+      const loadPromises: Promise<void>[] = [];
+
+      for (let i = 0; i < FRAME_COUNT; i += 1) {
+        const image = new Image();
+        image.src = frameSrc(i);
+        image.decoding = 'async';
+        images.push(image);
+
+        loadPromises.push(
+          new Promise<void>((resolve) => {
+            image.onload = async () => {
+              try {
+                await image.decode();
+              } catch {
+                // onload is enough as a fallback on browsers that reject decode().
+              }
+              resolve();
+            };
+            image.onerror = () => resolve();
+          })
+        );
+      }
+
+      imagesRef.current = images;
+      await Promise.all(loadPromises);
+      if (cancelled) return;
+
+      drawFrame(0);
+      setLoaded(true);
+      readScrollTarget();
     }
 
     function readScrollTarget() {
@@ -98,22 +126,29 @@ export default function ScrollDetail() {
       const clamped = Math.max(0, Math.min(1, raw));
 
       targetFrameRef.current = clamped * (FRAME_COUNT - 1);
-      setProgress(clamped);
+
+      if (railRef.current) {
+        railRef.current.style.transform = `scaleY(${Math.max(clamped, 0.02)})`;
+      }
+
+      const nextStage = clamped < 0.24 ? 0 : clamped < 0.52 ? 1 : clamped < 0.78 ? 2 : 3;
+      if (nextStage !== stageRef.current) {
+        stageRef.current = nextStage;
+        setStage(nextStage);
+      }
     }
 
     function animate() {
-      const target = targetFrameRef.current;
-      const current = currentFloatFrameRef.current;
-      const distance = target - current;
+      if (loaded || imagesRef.current.length) {
+        const target = targetFrameRef.current;
+        const current = currentFloatFrameRef.current;
+        const distance = target - current;
+        // Slightly stronger interpolation means fewer skipped frames while still feeling attached to the finger.
+        const next = Math.abs(distance) < 0.03 ? target : current + distance * 0.14;
+        currentFloatFrameRef.current = next;
 
-      // Ease toward the requested scroll frame instead of snapping straight to it.
-      const next = Math.abs(distance) < 0.08 ? target : current + distance * 0.22;
-      currentFloatFrameRef.current = next;
-
-      const nextFrame = Math.max(0, Math.min(FRAME_COUNT - 1, Math.round(next)));
-      if (nextFrame !== currentFrameRef.current) {
-        const image = imagesRef.current[nextFrame];
-        if (image?.complete && image.naturalWidth) {
+        const nextFrame = Math.max(0, Math.min(FRAME_COUNT - 1, Math.round(next)));
+        if (nextFrame !== currentFrameRef.current) {
           currentFrameRef.current = nextFrame;
           drawFrame(nextFrame);
         }
@@ -122,28 +157,24 @@ export default function ScrollDetail() {
       animationRef.current = requestAnimationFrame(animate);
     }
 
-    function handleScroll() {
-      readScrollTarget();
-    }
-
     function resize() {
       drawFrame(currentFrameRef.current);
       readScrollTarget();
     }
 
-    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('scroll', readScrollTarget, { passive: true });
     window.addEventListener('resize', resize);
+    preload();
     readScrollTarget();
     animationRef.current = requestAnimationFrame(animate);
 
     return () => {
-      window.removeEventListener('scroll', handleScroll);
+      cancelled = true;
+      window.removeEventListener('scroll', readScrollTarget);
       window.removeEventListener('resize', resize);
       if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
     };
   }, []);
-
-  const stage = progress < 0.24 ? 0 : progress < 0.52 ? 1 : progress < 0.78 ? 2 : 3;
 
   return (
     <section ref={sectionRef} className="scrollStory" id="experience">
@@ -183,7 +214,7 @@ export default function ScrollDetail() {
         </div>
 
         <div className="scrollRail" aria-hidden="true">
-          <span style={{ transform: `scaleY(${Math.max(progress, 0.02)})` }} />
+          <span ref={railRef} />
         </div>
         <div className="scrollHint">SCROLL TO DETAIL</div>
       </div>
