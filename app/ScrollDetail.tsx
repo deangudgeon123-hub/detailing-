@@ -11,7 +11,9 @@ export default function ScrollDetail() {
   const sectionRef = useRef<HTMLElement | null>(null);
   const imagesRef = useRef<HTMLImageElement[]>([]);
   const currentFrameRef = useRef(0);
-  const rafRef = useRef<number | null>(null);
+  const currentFloatFrameRef = useRef(0);
+  const targetFrameRef = useRef(0);
+  const animationRef = useRef<number | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [progress, setProgress] = useState(0);
 
@@ -26,7 +28,7 @@ export default function ScrollDetail() {
       image.onload = () => {
         loadedCount += 1;
         if (i === 0) drawFrame(0);
-        if (loadedCount >= Math.min(18, FRAME_COUNT)) setLoaded(true);
+        if (loadedCount >= FRAME_COUNT) setLoaded(true);
       };
       images.push(image);
     }
@@ -86,8 +88,7 @@ export default function ScrollDetail() {
       ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
     }
 
-    function update() {
-      rafRef.current = null;
+    function readScrollTarget() {
       const section = sectionRef.current;
       if (!section) return;
 
@@ -95,33 +96,50 @@ export default function ScrollDetail() {
       const scrollable = section.offsetHeight - window.innerHeight;
       const raw = scrollable > 0 ? -rect.top / scrollable : 0;
       const clamped = Math.max(0, Math.min(1, raw));
-      const nextFrame = Math.min(FRAME_COUNT - 1, Math.round(clamped * (FRAME_COUNT - 1)));
 
+      targetFrameRef.current = clamped * (FRAME_COUNT - 1);
       setProgress(clamped);
-      if (nextFrame !== currentFrameRef.current) {
-        currentFrameRef.current = nextFrame;
-        drawFrame(nextFrame);
-      }
     }
 
-    function requestUpdate() {
-      if (rafRef.current !== null) return;
-      rafRef.current = requestAnimationFrame(update);
+    function animate() {
+      const target = targetFrameRef.current;
+      const current = currentFloatFrameRef.current;
+      const distance = target - current;
+
+      // Ease toward the requested scroll frame instead of snapping straight to it.
+      const next = Math.abs(distance) < 0.08 ? target : current + distance * 0.22;
+      currentFloatFrameRef.current = next;
+
+      const nextFrame = Math.max(0, Math.min(FRAME_COUNT - 1, Math.round(next)));
+      if (nextFrame !== currentFrameRef.current) {
+        const image = imagesRef.current[nextFrame];
+        if (image?.complete && image.naturalWidth) {
+          currentFrameRef.current = nextFrame;
+          drawFrame(nextFrame);
+        }
+      }
+
+      animationRef.current = requestAnimationFrame(animate);
+    }
+
+    function handleScroll() {
+      readScrollTarget();
     }
 
     function resize() {
       drawFrame(currentFrameRef.current);
-      requestUpdate();
+      readScrollTarget();
     }
 
-    window.addEventListener('scroll', requestUpdate, { passive: true });
+    window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('resize', resize);
-    requestUpdate();
+    readScrollTarget();
+    animationRef.current = requestAnimationFrame(animate);
 
     return () => {
-      window.removeEventListener('scroll', requestUpdate);
+      window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', resize);
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
     };
   }, []);
 
