@@ -44,6 +44,7 @@ export default function ScrollDetail() {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const width = window.innerWidth;
       const height = window.innerHeight;
+      const isMobile = width <= 800;
 
       if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
         canvas.width = Math.floor(width * dpr);
@@ -67,7 +68,8 @@ export default function ScrollDetail() {
         offsetY = (height - drawHeight) / 2;
       } else {
         drawWidth = height * imageRatio;
-        offsetX = (width - drawWidth) / 2;
+        const overflowX = drawWidth - width;
+        offsetX = isMobile ? -(overflowX * 0.57) : -overflowX / 2;
       }
 
       ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
