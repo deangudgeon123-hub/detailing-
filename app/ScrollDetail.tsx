@@ -69,7 +69,7 @@ export default function ScrollDetail() {
       } else {
         drawWidth = height * imageRatio;
         const overflowX = drawWidth - width;
-        offsetX = isMobile ? -(overflowX * 0.74) : -overflowX / 2;
+        offsetX = isMobile ? -(overflowX * 0.26) : -overflowX / 2;
       }
 
       ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
