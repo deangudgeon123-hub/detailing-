@@ -119,7 +119,6 @@ export default function ScrollDetail() {
       <div className="stickyScene">
         <canvas ref={canvasRef} className="detailCanvas" aria-label="Scroll driven luxury car detailing sequence" />
         <div className="sceneVignette" />
-        <div className="sceneGrain" />
 
         {!loaded && (
           <div className="loader">
